@@ -1,0 +1,164 @@
+---
+title: "OLS bootstrap"
+author: "Chengyun Li"
+date: "`r Sys.Date()`"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+library(dplyr)
+library(boot)
+library(knitr)
+load("Paper2_3.RData")
+```
+
+```{r, include=FALSE}
+bootstrap_data <- exdat_eval %>%
+  mutate(Exposure = factor(case_when(exposure_k == "4 - Unexposed" ~ "Unexposed",
+                                     exposure_k == "3 - Low Exposure" ~ "Low Exposure",
+                                     exposure_k == "2 - High Exposure" ~ "High Exposure"), 
+                           levels = c("Unexposed", "Low Exposure", "High Exposure")),
+         Concussion = pre_con, # 0, 1-2, 3+
+         Concussion.history.1 = con_hist1, # 0, 1, 2, 3+
+         Concussion.history.2 = con_hist2, # 0, 1, 2+
+         Year_part = as.numeric(Year_part)
+         )
+
+outcome_names <- c("SWLS_TOTALSCORE", "Neuro_QoL", "SF12_Mental", "SF12_Physical", "AUDIT", "PSQI(insomnia)", "PHQ9(Psychometric)", "NSI(Neurobehavioral)")
+outcomes <- c("SWLS_TOTALSCORE", "NQLCD_TSCORE", "SF12MCS", "SF12PCS", "AUDIT_TOTALSCORE", "PSQITOTALSCORE", "PHQ9_TOTALSCORE", "NSISCORE")
+```
+
+```{r}
+# Custom function for performing OLS with bootstrapping standard error
+ols_with_bootstrapping <- function(data, formula, B = 100) {
+  # Fit the OLS model
+  fit <- lm(formula, data = data)
+
+  # Function for calculating the statistic of interest
+  boot_fn <- function(data, indices) {
+    fit_boot <- lm(formula, data = data[indices, ])
+    return(coef(fit_boot))
+  }
+
+  # Bootstrap the standard errors
+  boot_results <- boot(data, boot_fn, R = B)
+
+  # Extract coefficients, standard errors, and p-values
+  ## original coefficient of the linear model
+  ori_coef <- round(coef(fit), 3)
+  ## the averaging coefficients of the bootstapping samples
+  boot_coef <- round(apply(boot_results$t, 2, mean), 3)
+  ## the bias from the bootstrapping coefficient and the original coefficient
+  bias <- boot_coef - ori_coef 
+  ## the standard errors of the bootstrapping coefficient
+  standard_errors <- round(apply(boot_results$t, 2, sd), 3)
+  
+  # normal-theory confidence intervals 
+  # est.statistics +- 1.96(Z_{alpha/2}) boot.standard error
+  t_values <- round(ori_coef / standard_errors, 3)
+  p_values <- round(2 * pt(-abs(t_values), df = nrow(data) - ncol(data)), 4)
+  p_values <- ifelse(p_values<0.001, "<0.001", round(p_values,3))
+
+  # Combine the results
+   results <- data.frame(ori_coef, boot_coef, bias, standard_errors, p_values)
+   colnames(results) <- c("original.coef", "boot.coef", "bias", "std.error", "p-value")
+   row.names(results) <- c("Intercept", "Low Exposure", "High Exposure", "Concussion: 1-2",
+                           "Concussion: 3+", "Years.part",
+                          "Sex.Male", "Race.White", "Race.Others", "AIMS", "CDRS")
+
+  # Return the results
+  return(results)
+}
+```
+
+## SWLS_TOTALSCORE (Life Satisfaction):  
+```{r SWLS_TOTALSCORE}
+## Higher score = higher life satisfaction
+# Call the function with the appropriate formula
+set.seed(2323)
+result <- ols_with_bootstrapping(bootstrap_data, formula = SWLS_TOTALSCORE ~ Exposure +
+                                   Concussion + Year_part + SEX+ race_c + 
+                                   AIMSTOTALSCORE + CDRISCTOTALSCORE)
+kable(result, format = "markdown")
+```
+
+## Neuro-QoL
+```{r NQLCD_TSCORE}
+## lower score = impairment
+set.seed(2323)
+# Call the function with the appropriate formula
+result <- ols_with_bootstrapping(bootstrap_data, formula = NQLCD_TSCORE ~ Exposure +
+                                   Concussion + Year_part + SEX+ race_c + 
+                                   AIMSTOTALSCORE + CDRISCTOTALSCORE)
+kable(result, format = "markdown")
+```
+
+## SF12 Mental
+```{r SF12MCS}
+## Scores < 42 = may be indicative of clinical depression 
+set.seed(2323)
+# Call the function with the appropriate formula
+result <- ols_with_bootstrapping(bootstrap_data, formula = SF12MCS ~ Exposure + 
+                                   Concussion + Year_part + SEX+ race_c + 
+                                    AIMSTOTALSCORE + CDRISCTOTALSCORE)
+kable(result, format = "markdown")
+```
+
+## SF12 Physical
+```{r SF12PCS}
+## Scores < 50 = may be indicative of worse physical health status than the US general population
+set.seed(2323)
+# Call the function with the appropriate formula
+result <- ols_with_bootstrapping(bootstrap_data, formula = SF12PCS ~ Exposure + 
+                                   Concussion + Year_part + SEX+ race_c + 
+                                    AIMSTOTALSCORE + CDRISCTOTALSCORE)
+kable(result, format = "markdown")
+```
+
+## AUDIT
+```{r AUDIT_TOTALSCORE}
+## 1-7 = low risk consumption 8-14 = hazardous or harmful alcohol consumption >15 = likelihood of alcohol dependence
+set.seed(2323)
+# Call the function with the appropriate formula
+result <- ols_with_bootstrapping(bootstrap_data, formula = AUDIT_TOTALSCORE ~ Exposure + 
+                                   Concussion + Year_part + SEX+ race_c + 
+                                    AIMSTOTALSCORE + CDRISCTOTALSCORE)
+kable(result, format = "markdown")
+```
+
+## PSQI: an insomnia screening tool
+```{r PSQITOTALSCORE}
+## Scoring is based on a 0-3 scale: 3 reflects the negative extreme on the Likert Scale.
+set.seed(2323)
+# Call the function with the appropriate formula
+result <- ols_with_bootstrapping(bootstrap_data, formula = PSQITOTALSCORE ~ Exposure + 
+                                   Concussion + Year_part + SEX+ race_c + 
+                                    AIMSTOTALSCORE + CDRISCTOTALSCORE)
+kable(result, format = "markdown")
+```
+
+## PHQ9--Psychometric properties
+```{r PHQ9_TOTALSCORE}
+## higher scores = depression
+set.seed(2323)
+# Call the function with the appropriate formula
+result <- ols_with_bootstrapping(bootstrap_data, formula = PHQ9_TOTALSCORE ~ Exposure + 
+                                   Concussion + Year_part + SEX+ race_c + 
+                                    AIMSTOTALSCORE + CDRISCTOTALSCORE)
+kable(result, format = "markdown")
+```
+
+## NSI(Neurobehavioral Symptom Inventory)
+```{r NSISCORE}
+## higher score = severe symptoms
+set.seed(2323)
+# Call the function with the appropriate formula
+result <- ols_with_bootstrapping(bootstrap_data, formula = NSISCORE ~ Exposure + 
+                                   Concussion + Year_part + SEX+ race_c + 
+                                    AIMSTOTALSCORE + CDRISCTOTALSCORE)
+kable(result, format = "markdown")
+```

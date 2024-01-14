@@ -1,0 +1,569 @@
+---
+title: 'Statistical Report: Paper 2.3'
+author: "Chengyun Li"
+date: "`r Sys.Date()`"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+library(arsenal)
+library(tidyverse)
+library(magrittr)
+library(dplyr)
+library(haven)
+library(ggplot2)
+library(finalfit)
+```
+
+```{r, include=FALSE}
+# latest exit data 2023_08_25, version 9
+## no exposure level
+all_exit <- read.csv("I:/Projects/CARE/DataManagement/Data_RequestsDMwork/Clean Extraction for (p)ARC/CARE_2_C3fix_Files_IX/CARE_Exits_2023_08_24_data_ran_2023_08_25.csv")
+exits <- all_exit %>%
+  filter(!(NCAACATEGORY %in% c("Non-NCAA athlete", "Non-Sport Cadets", ""))) %>%
+  filter(NCAAVARSITY == "Yes")
+num_pop_exit <- length(exits$SUBJECTID)
+
+# first baselines 2023_08_25, version 9
+## no exposure level
+baselines <- read.csv("I:/Projects/CARE/DataManagement/Data_RequestsDMwork/Clean Extraction for (p)ARC/CARE_2_C3fix_Files_IX/CARE_Baselines_2023_08_24_data_ran_2023_08_25.csv") %>%
+  filter(SUBJECTSTUDYNUM %in% exits$SUBJECTSTUDYNUM & EVALYR == 1 & !(NCAACATEGORY %in% c("Non-NCAA athlete", "Non-Sport Cadets", ""))) %>%
+  filter(NCAAVARSITY == "Yes")
+
+# Concussion data
+conc_dat <- read.csv("I:/Projects/CARE/Chengyun/ExitData/Paper2.3/Subject_concussion_counts.csv")
+
+# Exposure.level level
+exp_group <- baselines %>%
+  dplyr::select(SUBJECTSTUDYNUM, FIRST_UG_EXP_GROUP_SPORT) %>%
+  filter(SUBJECTSTUDYNUM %in% exits$SUBJECTSTUDYNUM)
+```
+
+Data 8-24-2023, `r num_pop_exit` were NCAA athletes at exit. 3663 of them have baselines.
+
+
+```{r, include=FALSE}
+# Filter to only exit data, merge exposure level data & dem_data, & keep only NCAA athletes, 3663
+exdat <- exits %>% 
+  right_join(exp_group, by = "SUBJECTSTUDYNUM") %>%  #Includes exposure level
+  left_join(conc_dat, by = "SUBJECTSTUDYNUM") %>%    #Includes number of concussions
+  mutate(mil = CIVILIAN_MILITARY,
+         exposure_k = FIRST_UG_EXP_GROUP_SPORT,
+         race_c = factor(dplyr::case_when(RACE == "White" ~ "White",
+                                   RACE == "AfricanAmerican" ~ "Black",
+                                   RACE %in% c("Multiple Races", "HawaiianPacificIsl", "Asian", "IndianAlaskan") ~ "Other", 
+                                   RACE %in% c("", "Unknown", "Skipped") ~ NA_character_), levels = c("Black", "White", "Other")),
+         #Whether concussed in CARE (Y/N)
+         concussed = dplyr::case_when(CARE_CONCUSSION_COUNT > 0 ~ "Yes", 
+                                      CARE_CONCUSSION_COUNT == 0 | is.na(CARE_CONCUSSION_COUNT) ~ "No"),
+         pre_con = case_when(TO_EOS_CONCUSSION_COUNT == 0| is.na(TO_EOS_CONCUSSION_COUNT) ~ "0",
+                             TO_EOS_CONCUSSION_COUNT <= 2 ~ "1-2",
+                             TO_EOS_CONCUSSION_COUNT >= 3 ~ "3+"),
+         LEARNDIS = na_if(LEARNDIS, ""),
+         ADDADHD = na_if(ADDADHD, ""),
+         DEPRESSION = na_if(DEPRESSION,""),
+         BIPOLAR = na_if(BIPOLAR,""),
+         NONMIGHA = na_if(NONMIGHA,""),
+         MIGHA = na_if(MIGHA, ""),
+         PSYDIS = na_if(PSYDIS,"")) 
+
+
+# Filter to only baseline data, merge exposure level data & dem_data, & keep only NCAA athletes
+basedat <- baselines %>% 
+  left_join(conc_dat, by = "SUBJECTSTUDYNUM") %>% 
+  mutate(mil = CIVILIAN_MILITARY,
+         exposure_k = FIRST_UG_EXP_GROUP_SPORT,
+         race_c = factor(case_when(RACE == "White" ~ "White", 
+                            RACE == "AfricanAmerican" ~ "Black",
+                            RACE %in% c("Multiple Races", "HawaiianPacificIsl", "Asian", "IndianAlaskan") ~ "Other", 
+                            RACE %in% c("", "Unknown", "Skipped") ~ NA_character_), levels = c("Black", "White", "Other")),
+         concussed = case_when(CARE_CONCUSSION_COUNT > 0 ~ "Yes", 
+                               CARE_CONCUSSION_COUNT == 0 | is.na(CARE_CONCUSSION_COUNT) ~ "No"), ##643 concussed in CARE
+         pre_con = case_when(TO_EOS_CONCUSSION_COUNT == 0| is.na(TO_EOS_CONCUSSION_COUNT) ~ "0",
+                             TO_EOS_CONCUSSION_COUNT <= 2 ~ "1-2",
+                             TO_EOS_CONCUSSION_COUNT >= 3 ~ "3+"),
+         LEARNDIS = na_if(LEARNDIS, ""),
+         ADDADHD = na_if(ADDADHD, ""),
+         DEPRESSION = na_if(DEPRESSION,""),
+         BIPOLAR = na_if(BIPOLAR,""),
+         NONMIGHA = na_if(NONMIGHA,""),
+         MIGHA = na_if(MIGHA, ""),
+         PSYDIS = na_if(PSYDIS,"")) 
+n <- 3663
+```
+
+
+```{r}
+##NQL: Average t-score: 50 (SD=10)
+#Clinical cut-offs:
+#Scores 0.5-1.0 SD worse than mean = mild symptoms/impairment
+#1.0-2.0 SD worse than mean = moderate symptoms/impairment
+#2.0< SD worse than mean = severe symptoms/impairment
+
+##PSQI:
+#Total score of 5 or more = poor sleeper
+
+##SWLS: Directionality: Higher score = better
+#30-35: highly satisfied with life
+#25-29: high score; likes life, things going well, etc
+#20-24: average score
+#15-19: slightly below average in life satisfaction
+#10-14: dissatisfied with life
+#5-9: extremely dissatisfied with life
+
+##AUDIT
+#Scoring direction: higher = increased alcohol usage
+#Clinical cut-off: 8 or more = indicator of hazardous or harmful use
+#College students recommended cutoff for DSM-5 alcohol use disorder: 
+#Males: 7 [specificity= 76.0%, sensitivity= 74.6%, J = .51]
+#Females: 6 [specificity= 62.4%, sensitivity= 88.3%, J= .51]
+#Severity levels (gender indiscriminate)
+#Mild: 5, Moderate: 8, Severe: 12
+
+##PHQ9: directionality: higher = worse
+#Clinical cut-offs: Between 8-11 and up; acceptable diagnostic property for diagnosing Major Depressive Disorder.
+#0-4: no depressive symptoms, 5-9: mild depressive symptoms, 10-14: moderate depressive symptoms, 15-19: moderate-severe symptoms
+#20-27: severe depressive symptoms
+#Initial cutoff proposed by PHQ9 authors: >10 for major depression
+
+##NSISCORE: ?
+
+##SF12: 
+#mean of 50 and a standard deviation of 10 among the general population.
+#> 55 better, 45-55 (+-0.5SD), normal, <45 poor. 
+#higher score indicates better health
+#higher values = poorer health state) are: GH1 (item #1), BP2 (item #8), MH3 (item #9) and VT2 (item #10) ??
+```
+
+```{r, include= FALSE}
+#Scales change by Reid's requirments, 8-25
+exdat_eval <- exdat %>%
+  mutate(NQL_impairment = case_when(#NQLCD_TSCORE < 45 & NQLCD_TSCORE >= 40 ~ "1. mild",
+                                    #NQLCD_TSCORE < 40 & NQLCD_TSCORE >= 30 ~ "2. moderate",
+                                    #NQLCD_TSCORE < 30 ~ "3. severe",
+                                    NQLCD_TSCORE < 45 ~ "Impaired",
+                                    NQLCD_TSCORE >= 45 ~ "Normal"),
+         PSQI_sleep = ifelse(PSQITOTALSCORE >= 5, "Poor", "Normal"),
+         SWLS_satisfaction = case_when(#SWLS_TOTALSCORE >= 30 ~ "1. Highly satisfied",
+                                       #SWLS_TOTALSCORE < 30 & SWLS_TOTALSCORE >=25 ~ "2. satisfied",
+                                       #SWLS_TOTALSCORE < 25 & SWLS_TOTALSCORE >=20 ~ "3. Normal",
+                                       SWLS_TOTALSCORE >= 20 ~ "Normal",
+                                       #SWLS_TOTALSCORE < 20 & SWLS_TOTALSCORE >=15 ~ "4. slightly dissatisfied",
+                                       #SWLS_TOTALSCORE < 15 & SWLS_TOTALSCORE >=10 ~ "5. dissatisfied",
+                                       #SWLS_TOTALSCORE < 10 ~ "6. extremly dissatisfied",
+                                       SWLS_TOTALSCORE < 20 ~ "Dissatisfied"),
+         AUDIT_alcohol = ifelse(AUDIT_TOTALSCORE >= 8, "Harmful", "Normal"),
+         PHQ9_dep = case_when(PHQ9_TOTALSCORE <= 4 ~ "Normal",
+                              PHQ9_TOTALSCORE > 4 ~ "Depressed"),
+                              #PHQ9_TOTALSCORE > 4 & PHQ9_TOTALSCORE <= 9 ~ "2. mild depression",
+                              #PHQ9_TOTALSCORE >=10 ~ "3. major depression"),
+         BP = case_when(#SF12BP_NBS > 55 ~ "better",
+                        #SF12BP_NBS <= 55 & SF12BP_NBS > 45 ~ "normal",
+                        SF12BP_NBS > 45 ~ "Normal",
+                        SF12BP_NBS <= 45 ~ "Poor"),
+         GH = case_when(#SF12GH_NBS > 55 ~ "better",
+                        #SF12GH_NBS <= 55 & SF12GH_NBS > 45 ~ "normal",
+                        SF12GH_NBS > 45 ~ "Normal",
+                        SF12GH_NBS <= 45 ~ "Poor"),
+         MH = case_when(#SF12MH_NBS > 55 ~ "better",
+                        #SF12MH_NBS <= 55 & SF12MH_NBS > 45 ~ "normal",
+                        SF12MH_NBS > 45 ~ "Normal",
+                        SF12MH_NBS <= 45 ~ "Poor"),
+         PF = case_when(#SF12PF_NBS > 55 ~ "better",
+                        #SF12PF_NBS <= 55 & SF12PF_NBS > 45 ~ "normal",
+                        SF12PF_NBS > 45 ~ "Normal",
+                        SF12PF_NBS <= 45 ~ "Poor"),
+         RE = case_when(SF12RE_NBS > 45 ~ "Normal",
+                        #SF12RE_NBS <= 55 & SF12RE_NBS > 45 ~ "normal",
+                        SF12RE_NBS <= 45 ~ "Poor"),
+         RP = case_when(SF12RP_NBS > 45 ~ "Normal",
+                        #SF12RP_NBS <= 55 & SF12RP_NBS > 45 ~ "normal",
+                        SF12RP_NBS <= 45 ~ "Poor"),
+         SF = case_when(SF12SF_NBS > 45 ~ "Normal",
+                        #SF12SF_NBS <= 55 & SF12SF_NBS > 45 ~ "normal",
+                        SF12SF_NBS <= 45 ~ "Poor"),
+         VT = case_when(SF12VT_NBS > 45 ~ "Normal",
+                        #SF12VT_NBS <= 55 & SF12VT_NBS > 45 ~ "normal",
+                        SF12VT_NBS <= 45 ~ "Poor"))
+         #Total = case_when(SF12TOTALSCORE > 55 ~ "better",
+                        #SF12TOTALSCORE <= 55 & SF12TOTALSCORE > 45 ~ "normal",
+                        #SF12TOTALSCORE <=45 ~ "poorer"))
+```
+  
+
+```{r, include= FALSE}
+plot_data <- exdat_eval %>%
+  mutate(Exposure.level = factor(case_when(exposure_k == "4 - Unexposed" ~ "Unexposed",
+                                     exposure_k == "3 - Low Exposure" ~ "Low Exposure",
+                                     exposure_k == "2 - High Exposure" ~ "High Exposure"), 
+                           levels = c("Unexposed", "Low Exposure", "High Exposure")),
+         Concussion.history = pre_con,
+         SWLS_b = case_when(SWLS_satisfaction == "Dissatisfied" ~ 1,
+                              SWLS_satisfaction == "Normal" ~ 0),
+         PSQI_b = case_when(PSQI_sleep == "Poor" ~ 1,
+                            PSQI_sleep == "Normal" ~ 0),
+         NQL_b = case_when(NQL_impairment == "Impaired" ~ 1,
+                           NQL_impairment == "Normal" ~ 0),
+         AUDIT_b = case_when(AUDIT_alcohol == "Harmful" ~ 1,
+                           AUDIT_alcohol == "Normal" ~ 0),
+         PHQ9_b = case_when(PHQ9_dep == "Depressed" ~ 1,
+                           PHQ9_dep == "Normal" ~ 0),
+         PF_b = case_when(PF == "Poor" ~ 1,
+                           PF == "Normal" ~ 0),
+         MH_b = case_when(MH == "Poor" ~ 1,
+                           MH == "Normal" ~ 0))
+                                  
+```
+
+## SWLS
+```{r, echo = FALSE, results='asis', warning=FALSE}
+legend_title <- "Concussion History"
+
+p_SWLS <- ggplot(plot_data, 
+                 aes(x=Exposure.level, y=SWLS_TOTALSCORE, fill=pre_con, group=interaction(Exposure.level, pre_con))) +
+  geom_violin(position=position_dodge(1), scale="width", na.rm = TRUE, aes(fill=pre_con)) + 
+  geom_boxplot(width=0.3, position=position_dodge(1), fill="white") +
+  geom_hline(yintercept = 20, color="red", linetype = "dashed") +
+  labs(y="SWLS Total Score") +
+  scale_fill_manual(legend_title, values = c("#00274C", "#FFCB05", "#75988D")) + 
+  scale_x_discrete(name = NULL) + # remove x-axis name
+  theme_bw() +
+  theme(legend.position="top") +
+  theme(axis.line = element_line(colour = "black"),
+        panel.border = element_blank()) +
+  theme(axis.text = element_text(size = 10, color = "black"))  
+p_SWLS
+
+#model_SWLS <- glm(I(SWLS_satisfaction == "Dissatisfied") ~ Exposure.level + Concussion.history + SEX+ race_c, data=plot_data, family = #binomial())
+#summary(model_SWLS)
+
+factorlist  = plot_data %>%
+    summary_factorlist("SWLS_b", c("Exposure.level", "Concussion.history"), total_col = TRUE, fit_id = TRUE)
+plot_data %>%
+  or_plot("SWLS_b",
+          c("Exposure.level", "Concussion.history", "SEX", "race_c"), 
+          factorlist = factorlist,
+          remove_ref = FALSE,
+          table_text_size = 3.5,
+          dependent_label = "SWLS")
+
+
+table_SWLS <- plot_data %>%
+  filter(SWLS_TOTALSCORE < 20)
+SWLS_tab <- tableby(Exposure.level ~ pre_con, 
+                       data = table_SWLS)
+
+SWLS_labs = list("pre_con" = "Concussion History")
+
+summary(SWLS_tab, digits = 1, labelTranslations = SWLS_labs, total = FALSE, pfootnote = TRUE,
+        title="Proportion Crossing Clinical Threshold (<20) for SWLS (n=261, 7.1%)
+")
+```
+
+## PSQI
+```{r, echo = FALSE, results='asis', warning=FALSE}
+legend_title <- "Concussion History"
+
+p_PSQI <- ggplot(plot_data, 
+                 aes(x=Exposure.level, y=PSQITOTALSCORE, fill=pre_con, group=interaction(Exposure.level, pre_con))) +
+  geom_violin(position=position_dodge(1), scale="width", aes(fill=pre_con)) + 
+  geom_boxplot(width=0.3, position=position_dodge(1), fill="white") +
+  geom_hline(yintercept = 5, color="red", linetype = "dashed") +
+  labs(y="PSQI Total Score") +
+  scale_fill_manual(legend_title, values = c("#00274C", "#FFCB05", "#75988D")) + 
+  scale_x_discrete(name = NULL) + # remove x-axis name
+  theme_bw() +
+  theme(legend.position="top") +
+  theme(axis.line = element_line(colour = "black"),
+        panel.border = element_blank()) +
+  theme(axis.text = element_text(size = 10, color = "black"))  
+p_PSQI
+
+factorlist  = plot_data %>%
+    summary_factorlist("PSQI_b", c("Exposure.level", "Concussion.history"), total_col = TRUE, fit_id = TRUE)
+plot_data %>%
+  or_plot("PSQI_b",
+          c("Exposure.level", "Concussion.history", "SEX", "race_c"), 
+          factorlist = factorlist,
+          remove_ref = FALSE,
+          table_text_size = 3.5,
+          dependent_label = "PSQI")
+
+table_PSQI <- plot_data %>%
+  filter(PSQITOTALSCORE >= 5)
+PSQI_tab <- tableby(Exposure.level ~ pre_con, 
+                       data = table_PSQI)
+
+PSQI_labs = list("pre_con" = "Concussion History")
+
+summary(PSQI_tab, digits = 1, labelTranslations = PSQI_labs, total = FALSE, pfootnote = TRUE,
+        title="Proportion Crossing Clinical Threshold (>=5) for PSQI (n=1720, 47.0%)
+")
+```
+
+## NeuroQOL
+```{r, echo = FALSE, results='asis', warning=FALSE}
+legend_title <- "Concussion History"
+
+p_NeuroQOL <- ggplot(plot_data, 
+                 aes(x=Exposure.level, y=NQLCD_TSCORE, fill=pre_con, group=interaction(Exposure.level, pre_con))) +
+  geom_violin(position=position_dodge(1), scale="width", aes(fill=pre_con)) + 
+  geom_boxplot(width=0.3, position=position_dodge(1), fill="white") +
+  geom_hline(yintercept = 45, color="red", linetype = "dashed") +
+  labs(y="NeuroQOL Total Score") +
+  scale_fill_manual(legend_title, values = c("#00274C", "#FFCB05", "#75988D")) + 
+  scale_x_discrete(name = NULL) + # remove x-axis name
+  theme_bw() +
+  theme(legend.position="top") +
+  theme(axis.line = element_line(colour = "black"),
+        panel.border = element_blank()) +
+  theme(axis.text = element_text(size = 10, color = "black"))  
+p_NeuroQOL
+
+factorlist  = plot_data %>%
+    summary_factorlist("NQL_b", c("Exposure.level", "Concussion.history"), total_col = TRUE, fit_id = TRUE)
+plot_data %>%
+  or_plot("NQL_b",
+          c("Exposure.level", "Concussion.history", "SEX", "race_c"), 
+          factorlist = factorlist,
+          remove_ref = FALSE,
+          table_text_size = 3.5,
+          dependent_label = "NQL")
+
+table_NeuroQOL <- plot_data %>%
+  filter(NQLCD_TSCORE < 45)
+NeuroQOL_tab <- tableby(Exposure.level ~ pre_con, 
+                       data = table_NeuroQOL)
+
+NeuroQOL_labs = list("pre_con" = "Concussion History")
+
+summary(NeuroQOL_tab, digits = 1, labelTranslations = NeuroQOL_labs, total = FALSE, pfootnote = TRUE,
+        title="Proportion Crossing Clinical Threshold (<45) for NeuroQOL (n=506, 13.8%)
+")
+```
+
+## PHQ9
+```{r, echo = FALSE, results='asis', warning=FALSE}
+legend_title <- "Concussion History"
+
+p_PHQ9 <- ggplot(plot_data, 
+                 aes(x=Exposure.level, y=PHQ9_TOTALSCORE, fill=pre_con, group=interaction(Exposure.level, pre_con))) +
+  geom_violin(position=position_dodge(1), scale="width", na.rm=TRUE, aes(fill=pre_con)) + 
+  geom_boxplot(width=0.3, position=position_dodge(1), fill="white") +
+  geom_hline(yintercept = 4, color="red", linetype = "dashed") +
+  labs(y="PHQ9 Total Score") +
+  scale_fill_manual(legend_title, values = c("#00274C", "#FFCB05", "#75988D")) + 
+  scale_x_discrete(name = NULL) + # remove x-axis name
+  theme_bw() +
+  theme(legend.position="top") +
+  theme(axis.line = element_line(colour = "black"),
+        panel.border = element_blank()) +
+  theme(axis.text = element_text(size = 10, color = "black"))  
+p_PHQ9
+
+factorlist  = plot_data %>%
+    summary_factorlist("PHQ9_b", c("Exposure.level", "Concussion.history"), total_col = TRUE, fit_id = TRUE)
+plot_data %>%
+  or_plot("PHQ9_b",
+          c("Exposure.level", "Concussion.history", "SEX", "race_c"), 
+          factorlist = factorlist,
+          remove_ref = FALSE,
+          table_text_size = 3.5,
+          dependent_label = "PHQ9")
+
+table_PHQ9 <- plot_data %>%
+  filter(PHQ9_TOTALSCORE > 4)
+PHQ9_tab <- tableby(Exposure.level ~ pre_con, 
+                       data = table_PHQ9)
+
+PHQ9_labs = list("pre_con" = "Concussion History")
+
+summary(PHQ9_tab, digits = 1, labelTranslations = PHQ9_labs, total = FALSE, pfootnote = TRUE,
+        title="Proportion Crossing Clinical Threshold (>4) for PHQ9 (n=680, 18.6%)
+")
+```
+
+## AUDIT
+```{r, echo = FALSE, results='asis', warning=FALSE}
+legend_title <- "Concussion History"
+
+p_AUDIT <- ggplot(plot_data, 
+                 aes(x=Exposure.level, y=AUDIT_TOTALSCORE, fill=pre_con, group=interaction(Exposure.level, pre_con))) +
+  geom_violin(position=position_dodge(1), scale="width", aes(fill=pre_con)) + 
+  geom_boxplot(width=0.3, position=position_dodge(1), fill="white") +
+  geom_hline(yintercept = 8, color="red", linetype = "dashed") +
+  labs(y="AUDIT Total Score") +
+  scale_fill_manual(legend_title, values = c("#00274C", "#FFCB05", "#75988D")) + 
+  scale_x_discrete(name = NULL) + # remove x-axis name
+  theme_bw() +
+  theme(legend.position="top") +
+  theme(axis.line = element_line(colour = "black"),
+        panel.border = element_blank()) +
+  theme(axis.text = element_text(size = 10, color = "black"))  
+p_AUDIT
+
+factorlist  = plot_data %>%
+    summary_factorlist("AUDIT_b", c("Exposure.level", "Concussion.history"), total_col = TRUE, fit_id = TRUE)
+plot_data %>%
+  or_plot("AUDIT_b",
+          c("Exposure.level", "Concussion.history", "SEX", "race_c"), 
+          factorlist = factorlist,
+          remove_ref = FALSE,
+          table_text_size = 3.5,
+          dependent_label = "AUDIT")
+
+table_AUDIT <- plot_data %>%
+  filter(AUDIT_TOTALSCORE >= 8)
+AUDIT_tab <- tableby(Exposure.level ~ pre_con, 
+                       data = table_AUDIT)
+
+AUDIT_labs = list("pre_con" = "Concussion History")
+
+summary(AUDIT_tab, digits = 1, labelTranslations = AUDIT_labs, total = FALSE, pfootnote = TRUE,
+        title="Proportion Crossing Clinical Threshold (>=8) for AUDIT (n=747, 20.3%)
+")
+```
+
+## NIS
+```{r, echo = FALSE, results='asis', warning=FALSE}
+legend_title <- "Concussion History"
+
+p_NIS <- ggplot(plot_data, 
+                 aes(x=Exposure.level, y=NSISCORE, fill=pre_con, group=interaction(Exposure.level, pre_con))) +
+  geom_violin(position=position_dodge(1), scale="width", aes(fill=pre_con)) + 
+  geom_boxplot(width=0.3, position=position_dodge(1), fill="white") +
+  #geom_hline(yintercept = 8, color="red", linetype = "dashed") +
+  labs(y="NIS Total Score") +
+  scale_fill_manual(legend_title, values = c("#00274C", "#FFCB05", "#75988D")) + 
+  scale_x_discrete(name = NULL) + # remove x-axis name
+  theme_bw() +
+  theme(legend.position="top") +
+  theme(axis.line = element_line(colour = "black"),
+        panel.border = element_blank()) +
+  theme(axis.text = element_text(size = 10, color = "black"))  
+p_NIS
+
+#table_NIS <- plot_data %>%
+#  filter(NSISCORE >= 8)
+#NIS_tab <- tableby(Exposure.level ~ pre_con, 
+#                       data = table_NIS)
+
+#NIS_labs = list("pre_con" = "Concussion History")
+
+#summary(NIS_tab, digits = 1, labelTranslations = NIS_labs, total = FALSE, pfootnote = TRUE,
+#        title="Proportion Crossing Clinical Threshold (>=8) for NIS (n=747, 20.3%)
+#")
+```
+
+## SF12PF
+```{r, echo = FALSE, results='asis', warning=FALSE}
+legend_title <- "Concussion History"
+
+p_SF12PF <- ggplot(plot_data, 
+                 aes(x=Exposure.level, y=SF12PF_NBS, fill=pre_con, group=interaction(Exposure.level, pre_con))) +
+  geom_violin(position=position_dodge(1), scale="width", aes(fill=pre_con)) + 
+  geom_boxplot(width=0.3, position=position_dodge(1), fill="white") +
+  geom_hline(yintercept = 45, color="red", linetype = "dashed") +
+  labs(y="SF12PF Score") +
+  scale_fill_manual(legend_title, values = c("#00274C", "#FFCB05", "#75988D")) + 
+  scale_x_discrete(name = NULL) + # remove x-axis name
+  theme_bw() +
+  theme(legend.position="top") +
+  theme(axis.line = element_line(colour = "black"),
+        panel.border = element_blank()) +
+  theme(axis.text = element_text(size = 10, color = "black"))  
+p_SF12PF
+
+factorlist  = plot_data %>%
+    summary_factorlist("PF_b", c("Exposure.level", "Concussion.history"), total_col = TRUE, fit_id = TRUE)
+plot_data %>%
+  or_plot("PF_b",
+          c("Exposure.level", "Concussion.history", "SEX", "race_c"), 
+          factorlist = factorlist,
+          remove_ref = FALSE,
+          table_text_size = 3.5,
+          dependent_label = "PF")
+
+table_SF12PF <- plot_data %>%
+  filter(SF12PF_NBS <=45)
+SF12PF_tab <- tableby(Exposure.level ~ pre_con, 
+                       data = table_SF12PF)
+
+SF12PF_labs = list("pre_con" = "Concussion History")
+
+summary(SF12PF_tab, digits = 1, labelTranslations = SF12PF_labs, total = FALSE, pfootnote = TRUE,
+        title="Proportion Crossing Clinical Threshold (<=45) for SF12PF (n=166, 4.5%)
+")
+```
+
+## SF12MH
+```{r, echo = FALSE, results='asis', warning=FALSE}
+legend_title <- "Concussion History"
+
+p_SF12MH <- ggplot(plot_data, 
+                 aes(x=Exposure.level, y=SF12MH_NBS, fill=pre_con, group=interaction(Exposure.level, pre_con))) +
+  geom_violin(position=position_dodge(1), scale="width", aes(fill=pre_con)) + 
+  geom_boxplot(width=0.3, position=position_dodge(1), fill="white") +
+  geom_hline(yintercept = 45, color="red", linetype = "dashed") +
+  labs(y="SF12MH Total Score") +
+  scale_fill_manual(legend_title, values = c("#00274C", "#FFCB05", "#75988D")) + 
+  scale_x_discrete(name = NULL) + # remove x-axis name
+  theme_bw() +
+  theme(legend.position="top") +
+  theme(axis.line = element_line(colour = "black"),
+        panel.border = element_blank()) +
+  theme(axis.text = element_text(size = 10, color = "black"))  
+p_SF12MH
+
+factorlist  = plot_data %>%
+    summary_factorlist("MH_b", c("Exposure.level", "Concussion.history"), total_col = TRUE, fit_id = TRUE)
+plot_data %>%
+  or_plot("MH_b",
+          c("Exposure.level", "Concussion.history", "SEX", "race_c"), 
+          factorlist = factorlist,
+          remove_ref = FALSE,
+          table_text_size = 3.5,
+          dependent_label = "MH")
+
+table_SF12MH <- plot_data %>%
+  filter(SF12MH_NBS <= 45)
+SF12MH_tab <- tableby(Exposure.level ~ pre_con, 
+                       data = table_SF12MH)
+
+SF12MH_labs = list("pre_con" = "Concussion History")
+
+summary(SF12MH_tab, digits = 1, labelTranslations = SF12MH_labs, total = FALSE, pfootnote = TRUE,
+        title="Proportion Crossing Clinical Threshold (<=45) for SF12MH (n=607, 16.6%)
+")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
